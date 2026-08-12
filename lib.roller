@@ -1,0 +1,32 @@
+// Roller compiler-library reference script.
+//
+// Concrete compiler state and all compiler operations are implemented in
+// lib/gcc.roller and lib/clang.roller.  The C runtime exposes only generic
+// arrays, records, filesystem/path operations and argv-based process calls.
+
+import "gcc"
+import "clang"
+
+#define SRC "./src"
+#define BIN "myproject"
+
+section build(jobs: int) {
+    roller::set_parallel_jobs(jobs);
+
+    let cc = Compiler::new();
+    if (gcc::get_compiler(&cc) != Compiler::AVAILABLE)
+        && (clang::get_compiler(&cc) != Compiler::AVAILABLE) {
+        log::error("No C compiler found. Install GCC or Clang.");
+        roller::exit(1);
+    }
+
+    let configured = cc.setflag("-c");
+    for-parallel file in dir.recursive(SRC) {
+        parallel configured.compile(file);
+    }
+    cc.link(configured.outputs(), BIN);
+}
+
+section run() {
+    process::run("./myproject");
+}

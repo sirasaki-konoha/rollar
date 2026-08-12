@@ -1,0 +1,25 @@
+[package]
+name = "roller-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "roller"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+roller-diagnostics = { path = "../roller-diagnostics" }
+roller-parser = { path = "../roller-parser" }
+roller-transpiler = { path = "../roller-transpiler" }
+thiserror.workspace = true
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+tempfile = "3"
+
+[lints]
+workspace = true

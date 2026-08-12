@@ -1,0 +1,123 @@
+// Clang compiler implementation.  This deliberately mirrors gcc.roller:
+// both implementations satisfy the same core Compiler contract.
+library "clang" {
+    compiler clang {
+        flags: Vec<String>,
+        output: String,
+        clang_available: bool,
+        file_location: String,
+        objects: Vec<String>,
+        optimize: integer,
+        failure: bool,
+    }
+
+    function name() -> String {
+        return "clang";
+    }
+
+    function get_compiler(compiler: Compiler) -> CompilerStatus {
+        if sys::cmd::is_exists("clang") {
+            compiler = self::clang;
+            compiler.file_location = sys::cmd::which("clang");
+            compiler.clang_available = true;
+            return Compiler::AVAILABLE;
+        }
+
+        log::error("Clang not found");
+        return Compiler::NOTFOUND;
+    }
+
+    function version() -> String {
+        let result = sys::process::output("clang", ["--version"]);
+        if result[0] == 0 {
+            return result[1];
+        }
+        return "";
+    }
+
+    implement Self::clang {
+        function set_output(compiler: self, output: String) -> Compiler {
+            compiler.output = output;
+            return compiler;
+        }
+
+        function setflag(compiler: self, flag: String) -> Compiler {
+            compiler.flags.push(flag);
+            return compiler;
+        }
+
+        function optimize(compiler: self, level: integer) -> Compiler {
+            if level == 0 {
+                compiler.flags.push("-O0");
+            } else {
+                if level == 1 {
+                    compiler.flags.push("-O1");
+                } else {
+                    if level == 2 {
+                        compiler.flags.push("-O2");
+                    } else {
+                        if level == 3 {
+                            compiler.flags.push("-O3");
+                        } else {
+                            log::error("Clang optimization level must be between 0 and 3.");
+                            roller::exit(4);
+                        }
+                    }
+                }
+            }
+            compiler.optimize = level;
+            return compiler;
+        }
+
+        function outputs(compiler: self) -> Vec<String> {
+            return compiler.objects;
+        }
+
+        paralleable function compile(compiler: self, file: String) {
+            if !compiler.clang_available {
+                log::error("Clang is not available. Install Clang or select another compiler.");
+                roller::exit(5);
+            }
+
+            let relative_output = sys::path::replace_extension(file, "o");
+            let output = sys::path::join(".roller/build", relative_output);
+            sys::fs::mkdir_parent(output);
+
+            let args = compiler.flags.copy();
+            args.push(file);
+            args.push("-o");
+            args.push(output);
+
+            let result = sys::process::output(compiler.file_location, args);
+            if result[0] == 0 {
+                compiler.objects.push(output);
+            } else {
+                log::error(result[2]);
+                compiler.failure = true;
+                roller::exit(5);
+            }
+        }
+
+        function link(compiler: self, outputs: Vec<String>, output: String) {
+            if compiler.failure {
+                log::error("Compilation failed; linking was skipped.");
+                roller::exit(5);
+            }
+            if outputs.is_empty() {
+                log::error("Cannot link an empty object-file list.");
+                roller::exit(5);
+            }
+
+            compiler.output = output;
+            let args = outputs.copy();
+            args.push("-o");
+            args.push(output);
+            let result = sys::process::output(compiler.file_location, args);
+            if result[0] != 0 {
+                log::error(result[2]);
+                roller::exit(5);
+            }
+            log::info(sys::str::concat("LINK ", output));
+        }
+    }
+}

@@ -1,0 +1,15 @@
+# Taste
+- Prefers `build.roller` as the Roller configuration filename over `RollerFile` (explicitly requested). Confidence: 0.9
+- Prefers to complete documents such as AGENTS.md section by section, rather than all at once. Confidence: 0.6
+- Communicates in Japanese. Confidence: 0.8
+- Prefers transpiling build scripts to C and compiling with TCC for fast execution, over a tree-walking interpreter (explicitly requested for Roller). Confidence: 0.9
+- Prefers the generated C runtime to be portable across compilers (TCC, GCC, Clang): avoids compiler-specific builtins (e.g. GCC's `__sync_*` atomics) in favor of standard constructs like pthread mutexes, since TCC must be able to compile the emitted code. Confidence: 0.7
+- Prefers standard-library functions written in the language itself (modeled on Rust's std) over hardcoded interpreter built-ins, for extensibility. Confidence: 0.9
+- Values accurate error messages that pinpoint where a problem is (source location), not vague failure output. Confidence: 0.8
+- Prefers documentation (README, docs/) to be rewritten to stay in sync whenever the architecture or behavior of the code changes. Confidence: 0.8
+- Provides design sketches as flexible guidance rather than literal specs — explicitly noted that samples need not be implemented as written ("この通りに実装しなくてもいい"). Confidence: 0.6
+- Prefers hierarchical, categorized namespaces for standard library APIs (e.g. `sys::cmd::*`, `sys::fs::*`, `sys::process::*`) over flat function names. Confidence: 0.6
+- Envisions the language with Rust-inspired typed syntax: typed signatures with `->` return annotations, `self` receiver, `implement Self::type { ... }` blocks for method definitions, typed struct fields (e.g. `Vec<String>`, `bool`, `String`, `integer`), library-scoped definitions (`library "name" { ... }`), and a `paralleable` modifier for parallel-capable functions. Confidence: 0.75
+- Prefers implementation work to be decomposed into small steps, laid out in a written plan, and then executed in a single pass ("すべての作業を分割し、プラン立てて一気に実装してください") rather than incremental back-and-forth. Confidence: 0.7
+- Keeps Roller's runtime to generic foundation primitives only — language-specific operations (e.g. C compilation, linking) must NOT be embedded anywhere in Roller (neither in the `sys::` namespace nor as C-specific runtime functions like `r_c_*`); users or Roller library files implement them on top of generic primitives such as `sys::process::run`, so Roller can target languages beyond C (explicitly requested twice: "sys名前空間にlinkなどをさせない…すべてはrollerファイル側でexecuteなどを実行すべき" and "CコンパイルはそもそもRollerの埋め込み関数に入れるべきではない…ユーザーもしくはライブラリ側がそれらを実装するので、Rollerは基盤を提供するだけでいい"). Confidence: 0.95
+- Wants library modules (`lib/*.roller`) and the reference `lib.roller` updated in the same pass whenever new runtime/`sys::` primitives are added, so they stay in sync and demonstrate the new APIs (explicitly requested: "合わせてgcc.rollerなども更新し、lib.rollerも更新してください"). Confidence: 0.8
