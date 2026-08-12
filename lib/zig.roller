@@ -1,5 +1,5 @@
-// Zig C-compiler implementation demonstrating that toolchains can be added
-// entirely in Roller without adding compiler-specific host code.
+// Native Zig compiler implementation.  Its optimization type, source format,
+// command shape, and output policy intentionally differ from the C libraries.
 library "zig" {
     compiler zig {
         flags: Vec<String>,
@@ -7,7 +7,7 @@ library "zig" {
         zig_available: bool,
         file_location: String,
         objects: Vec<String>,
-        optimize: integer,
+        optimize: String,
         failure: bool,
     }
 
@@ -45,24 +45,13 @@ library "zig" {
             return compiler;
         }
 
-        function optimize(compiler: self, level: integer) -> Compiler {
-            if level == 0 {
-                compiler.flags.push("-O0");
+        function optimize(compiler: self, level: String) -> Compiler {
+            if level == "ReleaseFast" || level == "ReleaseSafe" || level == "ReleaseSmall" || level == "Debug" {
+                compiler.flags.push("-O");
+                compiler.flags.push(level);
             } else {
-                if level == 1 {
-                    compiler.flags.push("-O1");
-                } else {
-                    if level == 2 {
-                        compiler.flags.push("-O2");
-                    } else {
-                        if level == 3 {
-                            compiler.flags.push("-O3");
-                        } else {
-                            log::error("Zig C optimization level must be between 0 and 3.");
-                            roller::exit(4);
-                        }
-                    }
-                }
+                log::error("Zig optimization mode must be Debug, ReleaseSafe, ReleaseFast, or ReleaseSmall.");
+                roller::exit(4);
             }
             compiler.optimize = level;
             return compiler;
@@ -77,16 +66,19 @@ library "zig" {
                 log::error("Zig is not available. Install Zig or select another compiler.");
                 roller::exit(5);
             }
+            if sys::path::extension(file) != "zig" {
+                return compiler;
+            }
+
             let relative_output = sys::path::replace_extension(file, "o");
             let output = sys::path::join(".roller/build", relative_output);
             sys::fs::mkdir_parent(output);
 
-            let args = ["cc"];
+            let args = ["build-obj"];
             let flags = compiler.flags.copy();
             args.push_vec(flags);
             args.push(file);
-            args.push("-o");
-            args.push(output);
+            args.push(sys::str::concat("-femit-bin=", output));
             let result = sys::process::output(compiler.file_location, args);
             if result[0] == 0 {
                 compiler.objects.push(output);
@@ -108,10 +100,10 @@ library "zig" {
             }
 
             compiler.output = output;
-            let args = ["cc"];
+            let args = ["build-exe"];
             args.push_vec(outputs);
-            args.push("-o");
-            args.push(output);
+            args.push(sys::str::concat("-femit-bin=", output));
+
             let result = sys::process::output(compiler.file_location, args);
             if result[0] != 0 {
                 log::error(result[2]);

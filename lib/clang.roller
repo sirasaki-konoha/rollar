@@ -78,6 +78,9 @@ library "clang" {
                 log::error("Clang is not available. Install Clang or select another compiler.");
                 roller::exit(5);
             }
+            if sys::path::extension(file) != "c" {
+                return compiler;
+            }
 
             let relative_output = sys::path::replace_extension(file, "o");
             let output = sys::path::join(".roller/build", relative_output);

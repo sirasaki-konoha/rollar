@@ -147,6 +147,95 @@ fn hello_c_example_builds_when_a_compiler_is_available() {
         .args([script.as_os_str(), std::ffi::OsStr::new("clean")])
         .assert()
         .success();
+    fs::remove_file(example.join("myproject")).unwrap();
+}
+
+#[test]
+fn hello_zig_example_builds_when_zig_is_available() {
+    if !executable_exists("zig") {
+        eprintln!("skipping hello-zig integration test: zig is not available");
+        return;
+    }
+    let example = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/hello-zig")
+        .canonicalize()
+        .unwrap();
+    let script = example.join("build.roller");
+
+    Command::cargo_bin("roller")
+        .unwrap()
+        .args([script.as_os_str(), std::ffi::OsStr::new("clean")])
+        .assert()
+        .success();
+    Command::cargo_bin("roller")
+        .unwrap()
+        .arg(&script)
+        .args(["build", "--jobs", "2"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("LINK myproject"));
+
+    let output = std::process::Command::new(example.join("myproject"))
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "Hello from Roller!\n"
+    );
+
+    Command::cargo_bin("roller")
+        .unwrap()
+        .args([script.as_os_str(), std::ffi::OsStr::new("clean")])
+        .assert()
+        .success();
+    fs::remove_file(example.join("myproject")).unwrap();
+}
+
+#[test]
+fn compiler_implementations_keep_field_types_and_compile_signatures_independent() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::write(
+        temp.path().join("build.roller"),
+        r#"library "numeric" {
+    compiler tool { optimize: integer }
+    function select(compiler: Compiler) { compiler = self::tool; }
+    implement Self::tool {
+        function compile(compiler: self, input: String) -> Compiler {
+            compiler.optimize = 1;
+            return compiler;
+        }
+    }
+}
+
+library "symbolic" {
+    compiler tool { optimize: String }
+    function select(compiler: Compiler) { compiler = self::tool; }
+    implement Self::tool {
+        function compile(compiler: self, input: String, mode: String) -> String {
+            compiler.optimize = mode;
+            return compiler.optimize;
+        }
+    }
+}
+
+section build() {
+    let compiler = Compiler::new();
+    symbolic::select(&compiler);
+    let result = compiler.compile("main.zig", "ReleaseFast");
+    log::info(result);
+}
+"#,
+    )
+    .unwrap();
+
+    Command::cargo_bin("roller")
+        .unwrap()
+        .current_dir(temp.path())
+        .arg("build")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("ReleaseFast"));
 }
 
 fn executable_exists(name: &str) -> bool {

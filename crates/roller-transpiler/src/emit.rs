@@ -32,9 +32,6 @@ enum VarType {
     Boolean,
     CString,
     Array,
-    FileEntry,
-    #[allow(dead_code)]
-    ObjectFile,
     CompilerStatus,
     Unit,
 }
@@ -58,8 +55,6 @@ struct ModuleRegistry {
     compiler_methods: HashMap<String, Vec<MethodBinding>>,
     /// Return types of module functions.
     function_returns: HashMap<(String, String), VarType>,
-    /// Field types shared by compiler declarations.
-    field_types: HashMap<String, VarType>,
     /// Concrete compilers declared by each library.
     compilers: HashSet<(String, String)>,
 }
@@ -73,7 +68,6 @@ impl ModuleRegistry {
             inline_modules: HashSet::new(),
             compiler_methods: HashMap::new(),
             function_returns: HashMap::new(),
-            field_types: HashMap::new(),
             compilers: HashSet::new(),
         }
     }
@@ -92,10 +86,6 @@ impl ModuleRegistry {
                     LibraryItem::Compiler(compiler) => {
                         self.compilers
                             .insert((library.name.clone(), compiler.name.clone()));
-                        for field in &compiler.fields {
-                            self.field_types
-                                .insert(field.name.clone(), type_from_name(&field.type_name));
-                        }
                     }
                     LibraryItem::Implement(implementation) => {
                         let implementation_name =
@@ -151,28 +141,31 @@ impl ModuleRegistry {
     }
 
     fn method_return_type(&self, name: &str) -> VarType {
-        self.compiler_methods
-            .get(name)
-            .and_then(|methods| methods.first())
-            .map_or(VarType::Unknown, |method| method.return_type)
+        let Some(methods) = self.compiler_methods.get(name) else {
+            return VarType::Unknown;
+        };
+        let Some(first) = methods.first() else {
+            return VarType::Unknown;
+        };
+        if methods
+            .iter()
+            .all(|method| method.return_type == first.return_type)
+        {
+            first.return_type
+        } else {
+            VarType::Unknown
+        }
     }
 
-    fn is_parallelable_method(&self, name: &str) -> bool {
+    fn has_parallelable_method(&self, name: &str) -> bool {
         self.compiler_methods
             .get(name)
-            .is_some_and(|methods| methods.iter().all(|method| method.parallelable))
+            .is_some_and(|methods| methods.iter().any(|method| method.parallelable))
     }
 
     fn function_return_type(&self, module: &str, name: &str) -> VarType {
         self.function_returns
             .get(&(module.to_string(), name.to_string()))
-            .copied()
-            .unwrap_or(VarType::Unknown)
-    }
-
-    fn field_type(&self, name: &str) -> VarType {
-        self.field_types
-            .get(name)
             .copied()
             .unwrap_or(VarType::Unknown)
     }
@@ -593,57 +586,69 @@ fn emit_method_dispatchers(
     method_names.sort();
     for method_name in method_names {
         let bindings = modules.method_bindings(&method_name).unwrap_or_default();
-        let Some(first) = bindings.first() else {
+        if bindings.is_empty() {
             continue;
-        };
-        if bindings
-            .iter()
-            .any(|binding| binding.argument_count != first.argument_count)
-        {
-            return Err(TranspileError::InvalidOperation {
-                message: format!(
-                    "all implementations of compiler method `{method_name}` must use the same arity"
-                ),
-                span: dummy_span(),
-            });
         }
-        let mut parameters = vec!["RValue receiver".to_string()];
-        parameters.extend((0..first.argument_count).map(|index| format!("RValue arg{index}")));
-        parameters.push("int _line".to_string());
-        writeln!(
-            out,
-            "static RValue r_dispatch_{}({}) {{",
-            sid(&method_name),
-            parameters.join(", ")
-        )
-        .unwrap();
-        for binding in bindings {
-            let arguments = (0..binding.argument_count)
-                .map(|index| format!("arg{index}"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let separator = if arguments.is_empty() { "" } else { ", " };
-            writeln!(
-                out,
-                "    if (r_compiler_is(receiver, \"{}\")) return {}(receiver, {}{}_line);",
-                esc(&binding.implementation),
-                binding.function_name,
-                arguments,
-                separator,
-            )
-            .unwrap();
+        emit_method_dispatcher(out, &method_name, bindings, false);
+        if bindings.iter().any(|binding| binding.parallelable) {
+            emit_method_dispatcher(out, &method_name, bindings, true);
         }
-        writeln!(
-            out,
-            "    r_error(_line, \"compiler implementation '%s' does not implement {}\", r_compiler_implementation(receiver, _line));",
-            esc(&method_name)
-        )
-        .unwrap();
-        writeln!(out, "    return r_unit();").unwrap();
-        writeln!(out, "}}").unwrap();
-        writeln!(out).unwrap();
     }
     Ok(())
+}
+
+fn emit_method_dispatcher(
+    out: &mut String,
+    method_name: &str,
+    bindings: &[MethodBinding],
+    parallel_only: bool,
+) {
+    let dispatcher_name = if parallel_only {
+        format!("r_dispatch_parallel_{}", sid(method_name))
+    } else {
+        format!("r_dispatch_{}", sid(method_name))
+    };
+    writeln!(
+        out,
+        "static RValue {}(RValue receiver, RValue arguments, int _line) {{",
+        dispatcher_name
+    )
+    .unwrap();
+    for binding in bindings {
+        if parallel_only && !binding.parallelable {
+            writeln!(
+                out,
+                "    if (r_compiler_is(receiver, \"{}\")) {{ r_error(_line, \"method {} is not paralleable for compiler implementation '%s'\", r_compiler_implementation(receiver, _line)); return r_unit(); }}",
+                esc(&binding.implementation),
+                esc(method_name),
+            )
+            .unwrap();
+            continue;
+        }
+        let mut arguments = (0..binding.argument_count)
+            .map(|index| format!("r_array_at(arguments, {index}, _line)"))
+            .collect::<Vec<_>>();
+        arguments.push("_line".to_string());
+        writeln!(
+            out,
+            "    if (r_compiler_is(receiver, \"{}\")) {{ r_array_require_length(arguments, {}, \"{}\", _line); return {}(receiver, {}); }}",
+            esc(&binding.implementation),
+            binding.argument_count,
+            esc(method_name),
+            binding.function_name,
+            arguments.join(", "),
+        )
+        .unwrap();
+    }
+    writeln!(
+        out,
+        "    r_error(_line, \"compiler implementation '%s' does not implement {}\", r_compiler_implementation(receiver, _line));",
+        esc(method_name)
+    )
+    .unwrap();
+    writeln!(out, "    return r_unit();").unwrap();
+    writeln!(out, "}}").unwrap();
+    writeln!(out).unwrap();
 }
 
 fn emit_compiler_constructor(out: &mut String, library: &str, compiler: &CompilerDeclaration) {
@@ -902,7 +907,9 @@ fn emit_stmt(
             )
             .unwrap();
             sc.push();
-            sc.define(binding, VarType::FileEntry);
+            // Iterables are dynamically typed.  The element can be a path,
+            // command description, source record, or any future runtime value.
+            sc.define(binding, VarType::Unknown);
             emit_block(out, body, sn, sc, m, &format!("{ind}        "))?;
             sc.pop();
             writeln!(out, "{}    }}", ind).unwrap();
@@ -934,19 +941,30 @@ fn emit_parallel(
     sc: &mut ScopeStack,
     m: &ModuleRegistry,
 ) -> Result<String, TranspileError> {
-    let ExpressionKind::MethodCall { method, .. } = &expr.kind else {
+    let ExpressionKind::MethodCall {
+        receiver,
+        method,
+        arguments,
+    } = &expr.kind
+    else {
         return Err(TranspileError::InvalidOperation {
             message: "parallel requires a compiler method call".into(),
             span: expr.span,
         });
     };
-    if !m.is_parallelable_method(method) {
+    if !m.has_parallelable_method(method) {
         return Err(TranspileError::InvalidOperation {
             message: format!("compiler method `{method}` is not declared paralleable"),
             span: expr.span,
         });
     }
-    let call = emit_expr(expr, sc, m)?;
+    if infer_ty(receiver, sc, m) != VarType::Compiler {
+        return Err(TranspileError::Type {
+            message: "parallel method receiver must be a compiler implementation".into(),
+            span: receiver.span,
+        });
+    }
+    let call = emit_compiler_dispatch(receiver, method, arguments, expr.span, sc, m, true)?;
     Ok(format!(
         "r_parallel_collect_begin(); (void){}; r_parallel_collect_end();",
         call
@@ -1089,6 +1107,7 @@ fn resolve_sys_chain(sub: &str, member: &str) -> Option<&'static str> {
         "path" => match member {
             "join" => Some("r_sys_path_join"),
             "replace_extension" => Some("r_sys_path_replace_extension"),
+            "extension" => Some("r_sys_path_extension"),
             _ => None,
         },
         _ => None,
@@ -1293,7 +1312,6 @@ fn emit_method(
     sc: &mut ScopeStack,
     m: &ModuleRegistry,
 ) -> Result<String, TranspileError> {
-    let rc = emit_expr(receiver, sc, m)?;
     let ln = span.start.line;
 
     if matches!(&receiver.kind, ExpressionKind::Identifier(name) if name == "dir")
@@ -1305,26 +1323,31 @@ fn emit_method(
     }
 
     let recv_ty = infer_ty(receiver, sc, m);
-    match (recv_ty, method) {
-        (VarType::Array, "push" | "push_str") => {
+    if recv_ty == VarType::Compiler && m.method_bindings(method).is_some() {
+        return emit_compiler_dispatch(receiver, method, args, span, sc, m, false);
+    }
+
+    let rc = emit_expr(receiver, sc, m)?;
+    match method {
+        "push" | "push_str" => {
             arity(args, 1, span)?;
             let ac = emit_args_rv(args, sc, m)?;
             return Ok(format!("r_array_push_value({}, {}, {})", rc, ac[0], ln));
         }
-        (VarType::Array, "push_vec") => {
+        "push_vec" => {
             arity(args, 1, span)?;
             let ac = emit_args_rv(args, sc, m)?;
             return Ok(format!("r_array_extend({}, {}, {})", rc, ac[0], ln));
         }
-        (VarType::Array, "copy") => {
+        "copy" => {
             arity(args, 0, span)?;
             return Ok(format!("r_array_copy({}, {})", rc, ln));
         }
-        (VarType::Array, "is_empty") | (VarType::CString, "is_empty") => {
+        "is_empty" => {
             arity(args, 0, span)?;
             return Ok(format!("r_value_is_empty({}, {})", rc, ln));
         }
-        (VarType::Array, "join") => {
+        "join" => {
             arity(args, 1, span)?;
             let ac = emit_args_rv(args, sc, m)?;
             return Ok(format!("r_array_join({}, {}, {})", rc, ac[0], ln));
@@ -1332,28 +1355,46 @@ fn emit_method(
         _ => {}
     }
 
-    if recv_ty == VarType::Compiler
-        && let Some(bindings) = m.method_bindings(method)
-        && let Some(binding) = bindings.first()
-    {
-        arity(args, binding.argument_count, span)?;
-        let ac = emit_args_rv(args, sc, m)?;
-        if ac.is_empty() {
-            return Ok(format!("r_dispatch_{}({}, {})", sid(method), rc, ln));
-        }
-        return Ok(format!(
-            "r_dispatch_{}({}, {}, {})",
-            sid(method),
-            rc,
-            ac.join(", "),
-            ln
-        ));
-    }
-
     Err(TranspileError::Name {
         message: format!("unknown method `{method}` for receiver type {recv_ty:?}"),
         span,
     })
+}
+
+fn emit_compiler_dispatch(
+    receiver: &Expression,
+    method: &str,
+    args: &[Expression],
+    span: Span,
+    sc: &mut ScopeStack,
+    m: &ModuleRegistry,
+    parallel_only: bool,
+) -> Result<String, TranspileError> {
+    let receiver_code = emit_expr(receiver, sc, m)?;
+    let argument_codes = emit_args_rv(args, sc, m)?;
+    let arguments = value_array(&argument_codes);
+    let prefix = if parallel_only {
+        "r_dispatch_parallel_"
+    } else {
+        "r_dispatch_"
+    };
+    Ok(format!(
+        "{}{}({}, {}, {})",
+        prefix,
+        sid(method),
+        receiver_code,
+        arguments,
+        span.start.line
+    ))
+}
+
+fn value_array(values: &[String]) -> String {
+    let mut code = String::from("({ RValue _args = r_array_new(); ");
+    for value in values {
+        write!(code, "r_array_push(&_args, {}); ", value).unwrap();
+    }
+    code.push_str("_args; })");
+    code
 }
 
 fn infer_ty(expr: &Expression, sc: &ScopeStack, _m: &ModuleRegistry) -> VarType {
@@ -1381,14 +1422,21 @@ fn infer_ty(expr: &Expression, sc: &ScopeStack, _m: &ModuleRegistry) -> VarType 
         }
         ExpressionKind::MethodCall {
             receiver, method, ..
-        } => match (infer_ty(receiver, sc, _m), method.as_str()) {
-            (VarType::Array, "copy") => VarType::Array,
-            (VarType::Array | VarType::CString, "is_empty") => VarType::Boolean,
-            (VarType::Array, "join") => VarType::CString,
-            (VarType::Array, "push" | "push_str" | "push_vec") => VarType::Unit,
-            (VarType::Compiler, _) => _m.method_return_type(method),
-            _ => VarType::Unknown,
-        },
+        } => {
+            if infer_ty(receiver, sc, _m) == VarType::Compiler
+                && _m.method_bindings(method).is_some()
+            {
+                _m.method_return_type(method)
+            } else {
+                match method.as_str() {
+                    "copy" => VarType::Array,
+                    "is_empty" => VarType::Boolean,
+                    "join" => VarType::CString,
+                    "push" | "push_str" | "push_vec" => VarType::Unit,
+                    _ => VarType::Unknown,
+                }
+            }
+        }
         ExpressionKind::Call { callee, .. } => {
             if let ExpressionKind::NamespaceAccess { namespace, member } = &callee.kind
                 && let Ok(module) = ident(namespace)
@@ -1399,7 +1447,10 @@ fn infer_ty(expr: &Expression, sc: &ScopeStack, _m: &ModuleRegistry) -> VarType 
                 infer_ty(callee, sc, _m)
             }
         }
-        ExpressionKind::MemberAccess { member, .. } => _m.field_type(member),
+        // Compiler fields are implementation-local dynamic values.  A field
+        // with the same name may intentionally have a different type in each
+        // compiler implementation.
+        ExpressionKind::MemberAccess { .. } => VarType::Unknown,
         ExpressionKind::Not(_) => VarType::Boolean,
         ExpressionKind::Index { .. } => VarType::Unknown,
     }
@@ -1611,6 +1662,42 @@ section b() { let c = Compiler::new(); let x = c.setflag("-c"); }"#)
         assert!(!c.contains("r_c_compile_context"));
         assert!(!c.contains("r_c_compile_one"));
         assert!(!c.contains("r_c_link_objects"));
+    }
+    #[test]
+    fn compiler_implementations_can_use_different_field_types_and_method_shapes() {
+        let c = tp(r#"library "numeric" {
+                compiler tool { optimize: integer, inputs: Vec<String> }
+                function select(compiler: Compiler) { compiler = self::tool; }
+                implement Self::tool {
+                    paralleable function compile(compiler: self, input: String) -> Compiler {
+                        return compiler;
+                    }
+                }
+            }
+            library "symbolic" {
+                compiler tool { optimize: String, inputs: Vec<symbolic::Node> }
+                implement Self::tool {
+                    paralleable function compile(
+                        compiler: self,
+                        graph: Map<String, Vec<symbolic::Node>>,
+                        options: symbolic::Options
+                    ) -> String {
+                        return "done";
+                    }
+                }
+            }
+            section build() {
+                let compiler = Compiler::new();
+                numeric::select(&compiler);
+                for-parallel input in ["source.any"] {
+                    parallel compiler.compile(input);
+                }
+            }"#);
+        assert!(c.contains("r_compiler_set(compiler, \"optimize\", r_integer(0)"));
+        assert!(c.contains("r_compiler_set(compiler, \"optimize\", r_string(\"\")"));
+        assert!(c.contains("r_array_require_length(arguments, 1, \"compile\""));
+        assert!(c.contains("r_array_require_length(arguments, 2, \"compile\""));
+        assert!(c.contains("r_dispatch_parallel_compile"));
     }
     #[test]
     fn library_with_sys_cmd() {

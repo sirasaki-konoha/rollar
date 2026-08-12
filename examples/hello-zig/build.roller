@@ -1,0 +1,28 @@
+import "zig"
+
+section build(jobs: int)
+{
+    roller::set_parallel_jobs(jobs);
+
+    let z = Compiler::new();
+
+    if (zig::get_compiler(&z) != Compiler::AVAILABLE)
+    {
+        log::error(
+            "No available Zig compiler was found. Roller checked zig executable"
+        );
+        roller::exit(1);
+    }
+
+    for-parallel file in dir.recursive("./src")
+    {
+        parallel z.compile(file);
+    }
+
+    z.link(z.outputs(), "myproject");
+}
+
+section run()
+{
+    process::run("./myproject");
+}

@@ -79,6 +79,9 @@ library "gcc" {
                 log::error("GCC is not available. Install GCC or select another compiler.");
                 roller::exit(5);
             }
+            if sys::path::extension(file) != "c" {
+                return compiler;
+            }
 
             let relative_output = sys::path::replace_extension(file, "o");
             let output = sys::path::join(".roller/build", relative_output);

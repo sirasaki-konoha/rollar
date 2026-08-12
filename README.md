@@ -1,6 +1,6 @@
 # Roller
 
-Roller は C プロジェクト向けのビルド記述言語です。Roller スクリプトを C にトランスパイルし、TCC、GCC、または Clang で生成コードを実行します。
+Roller は複数の言語・ツールチェーンを記述できるビルド言語です。Roller スクリプト自体は C にトランスパイルされ、TCC、GCC、または Clang で生成コードを実行しますが、ビルド対象の言語は C に限定されません。
 
 現在の実行系は C トランスパイラのみです。旧Rustツリーウォーカーインタプリタと旧Rustビルドバックエンドは削除されています。
 
@@ -68,7 +68,7 @@ library "gcc" {
 }
 ```
 
-`Compiler::new()` は未選択のコア契約オブジェクトを作ります。`get_compiler` が具体実装を選択すると、`cc.setflag(...)` などは実装名に基づいて `.roller` の `implement` メソッドへ動的ディスパッチされます。
+`Compiler::new()` は未選択のコア契約オブジェクトを作ります。`get_compiler` が具体実装を選択すると、`cc.setflag(...)` などは実装名に基づいて `.roller` の `implement` メソッドへ動的ディスパッチされます。同じ名前のフィールドやメソッドでも、型、引数個数、戻り値型は実装ごとに独立して定義できます。たとえば GCC の `optimize` は `integer`、Zig の `optimize` は `String` です。
 
 Cランタイムが提供するのは、動的フィールド、配列、パス操作、ファイル操作、argvベースのプロセス実行、bounded並列ジョブ実行などの汎用機構です。`setflag`、`compile`、`outputs`、`link` を実装する専用ホスト関数はありません。
 
@@ -81,7 +81,15 @@ cargo run -p roller-cli -- examples/hello-c/build.roller run
 cargo run -p roller-cli -- examples/hello-c/build.roller clean
 ```
 
-成功時は `Hello from Roller!` と表示されます。
+Zig が利用可能なら、ネイティブの `zig build-obj` / `zig build-exe` 実装も試せます。
+
+```sh
+cargo run -p roller-cli -- examples/hello-zig/build.roller build --jobs 4
+./examples/hello-zig/myproject
+cargo run -p roller-cli -- examples/hello-zig/build.roller clean
+```
+
+どちらも成功時は `Hello from Roller!` と表示されます。
 
 ## 構成
 
@@ -105,7 +113,8 @@ cargo build --release
 ## 現在の制限と安全性
 
 - Linux/macOS向けのPOSIX実行系です。
-- `.c` の再帰探索を対象とし、ヘッダー依存解析とインクリメンタルメタデータは未実装です。
-- `compiler` フィールド型は現在 `String`、`integer`、`bool`、`Vec<T>` を初期化できます。
-- `optimize(level)` は符号なし整数の0〜3を受け付け、各ライブラリが `-O0`〜`-O3` をargvへ追加します。
+- `dir.recursive` は種類を限定せず通常ファイルを列挙します。入力の拡張子、出力形式、コマンド構成は各 `.roller` ライブラリが決めます。
+- `compiler` の型注釈は実装単位で保持されます。既知の `String`、`integer`、`bool`、`Vec<T>` は対応する空値で初期化され、それ以外の型は動的なunit値から始まります。
+- 最適化の型と意味もライブラリ固有です。GCC/Clangは0〜3の整数、Zigは `Debug`、`ReleaseSafe`、`ReleaseFast`、`ReleaseSmall` の文字列を使います。
+- ヘッダー依存解析とインクリメンタルメタデータは未実装です。
 - Rollerスクリプトは任意の外部コマンドを実行できます。信頼できるビルドスクリプトだけを実行してください。argvはシェルを介さず `execvp` へ個別に渡されます。

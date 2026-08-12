@@ -66,9 +66,11 @@ library "gcc" {
 }
 ```
 
-`compiler = self::gcc` は、呼出元の未選択Compilerを具体実装へ切り替えます。フィールド代入は `compiler.field = value`、参照は `compiler.field` です。`implement` の先頭引数がメソッドレシーバです。すべての具体実装で同名メソッドの引数個数を一致させる必要があります。
+`compiler = self::gcc` は、呼出元の未選択Compilerを具体実装へ切り替えます。フィールド代入は `compiler.field = value`、参照は `compiler.field` です。`implement` の先頭引数がメソッドレシーバです。
 
-フィールドの初期値は `String` が空文字列、`integer` が0、`bool` がfalse、`Vec<T>` が空配列です。
+フィールド型、同名メソッドの引数型・引数個数・戻り値型は具体実装ごとに独立しています。呼び出し時は選択済み実装のシグネチャで引数個数を検証し、値の具体的な型は操作時に検証します。複数実装で戻り値型が一致しない呼び出しは、トランスパイラ内では動的な値として扱われます。これにより、たとえば `gcc.optimize(integer)` と `zig.optimize(String)`、あるいはツールチェーン固有の `compile` 入力を同じコアへ追加できます。
+
+型名は名前空間修飾と再帰的なジェネリックを保持できます（例: `Map<String, Vec<tool::Input>>`）。フィールドの初期値は `String` が空文字列、`integer` が0、`bool` がfalse、`Vec<T>` が空配列で、それ以外はunitです。
 
 ## 配列と文字列
 
@@ -86,7 +88,7 @@ library "gcc" {
 - `sys::cmd::which(name)`, `sys::cmd::is_exists(name)`
 - `sys::process::output(program, args)` → `[exit_code, stdout, stderr]`
 - `sys::process::run/status/spawn/wait/kill`
-- `sys::path::join(base, child)`, `sys::path::replace_extension(path, ext)`
+- `sys::path::join(base, child)`, `sys::path::replace_extension(path, ext)`, `sys::path::extension(path)`
 - `sys::fs::mkdir_parent(path)`, `mkdir_all`, `read`, `write`, `exists` など
 - `sys::str::concat(a, b)`, `contains(a, b)`
 - `sys::env::*`, `sys::io::*`, `sys::time::*`
@@ -101,7 +103,9 @@ for-parallel file in dir.recursive(SRC) {
 }
 ```
 
-`parallel` は `paralleable` と宣言されたCompilerメソッドだけを受け付けます。メソッド内の汎用プロセス実行をジョブとして収集し、ループ後に設定上限内で実行します。失敗時は新規ジョブ開始を止め、リンクへ進みません。
+`dir.recursive` は拡張子を限定せず、通常ファイルを決定的なパス順で返します。上の `file` は固定されたCソース型ではなく動的なループ要素です。各Compiler実装が `sys::path::extension` などで受理する入力を選択できます。
+
+`parallel` は `paralleable` と宣言されたCompilerメソッドを受け付けます。メソッド名は `compile` に固定されず、引数は通常の動的ディスパッチと同じく選択済み実装のシグネチャで検証されます。メソッド内の汎用プロセス実行をジョブとして収集し、ループ後に設定上限内で実行します。失敗時は新規ジョブ開始を止め、リンクへ進みません。
 
 ## 組み込み名前空間
 

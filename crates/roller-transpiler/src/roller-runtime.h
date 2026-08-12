@@ -315,6 +315,20 @@ static RValue r_array_get(RValue arr, RValue idx, int line) {
     if (i >= arr.as.array->count) r_error(line, "index %zu out of bounds (len %zu)", i, arr.as.array->count);
     return arr.as.array->elements[i];
 }
+static RValue r_array_at(RValue arr, size_t index, int line) {
+    if (arr.type != R_TYPE_ARRAY)
+        r_error(line, "method arguments must be an array, got %s", r_value_type_name(arr));
+    if (index >= arr.as.array->count)
+        r_error(line, "method argument %zu is out of bounds (len %zu)", index, arr.as.array->count);
+    return arr.as.array->elements[index];
+}
+static void r_array_require_length(RValue arr, size_t expected, const char *method, int line) {
+    if (arr.type != R_TYPE_ARRAY)
+        r_error(line, "arguments for method %s must be an array", method);
+    if (arr.as.array->count != expected)
+        r_error(line, "method %s expects %zu argument(s), got %zu",
+                method, expected, arr.as.array->count);
+}
 static RValue r_array_len(RValue arr, int line) {
     if (arr.type != R_TYPE_ARRAY) r_error(line, "len requires array, got %s", r_value_type_name(arr));
     return r_integer((uint64_t)arr.as.array->count);
@@ -439,8 +453,17 @@ static RValue r_sys_path_replace_extension(RValue path, RValue extension, int li
     return r_string(result);
 }
 
+static RValue r_sys_path_extension(RValue path, int line) {
+    if (path.type != R_TYPE_STRING)
+        r_error(line, "sys::path::extension requires a string path");
+    const char *slash = strrchr(path.as.string, '/');
+    const char *dot = strrchr(path.as.string, '.');
+    if (!dot || (slash && dot < slash) || dot[1] == '\0') return r_string("");
+    return r_string(dot + 1);
+}
+
 /* --- Directory traversal --- */
-static void r_sys_collect_c(const char *dir_path, RValue *result) {
+static void r_sys_collect_files(const char *dir_path, RValue *result) {
     DIR *dir = opendir(dir_path);
     if (!dir) return;
     struct dirent *entry;
@@ -448,14 +471,16 @@ static void r_sys_collect_c(const char *dir_path, RValue *result) {
         if (entry->d_name[0] == '.') continue;
         char full[4096]; snprintf(full, sizeof(full), "%s/%s", dir_path, entry->d_name);
         struct stat st; if (stat(full, &st) != 0) continue;
-        if (S_ISDIR(st.st_mode)) r_sys_collect_c(full, result);
-        else if (S_ISREG(st.st_mode)) {
-            size_t n = strlen(entry->d_name);
-            if (n > 2 && entry->d_name[n-2] == '.' && entry->d_name[n-1] == 'c')
-                r_array_push(result, r_string(full));
-        }
+        if (S_ISDIR(st.st_mode)) r_sys_collect_files(full, result);
+        else if (S_ISREG(st.st_mode)) r_array_push(result, r_string(full));
     }
     closedir(dir);
+}
+
+static int r_sys_compare_paths(const void *left, const void *right) {
+    const RValue *left_value = (const RValue*)left;
+    const RValue *right_value = (const RValue*)right;
+    return strcmp(left_value->as.string, right_value->as.string);
 }
 
 static RValue r_sys_dir_recursive(RValue path, int line) {
@@ -465,7 +490,8 @@ static RValue r_sys_dir_recursive(RValue path, int line) {
     if (stat(path.as.string, &st) != 0) r_error(line, "directory not found: %s", path.as.string);
     if (!S_ISDIR(st.st_mode)) r_error(line, "not a directory: %s", path.as.string);
     RValue result = r_array_new();
-    r_sys_collect_c(path.as.string, &result);
+    r_sys_collect_files(path.as.string, &result);
+    qsort(result.as.array->elements, result.as.array->count, sizeof(RValue), r_sys_compare_paths);
     return result;
 }
 

@@ -241,13 +241,25 @@ impl Parser {
     fn parse_type_name(&mut self) -> Result<(String, Span), ParseError> {
         let (mut name, start) = self.consume_identifier("type name")?;
         let mut end = start;
+        while self.match_token(&TokenKind::DoubleColon) {
+            let (member, member_span) = self.consume_identifier("type name")?;
+            name.push_str("::");
+            name.push_str(&member);
+            end = member_span;
+        }
         if self.match_token(&TokenKind::Less) {
-            let (argument, argument_span) = self.consume_identifier("type argument")?;
+            let mut arguments = Vec::new();
+            loop {
+                let (argument, _) = self.parse_type_name()?;
+                arguments.push(argument);
+                if !self.match_token(&TokenKind::Comma) {
+                    break;
+                }
+            }
             end = self.consume(&TokenKind::Greater, "`>`")?.span;
             name.push('<');
-            name.push_str(&argument);
+            name.push_str(&arguments.join(", "));
             name.push('>');
-            let _ = argument_span;
         }
         Ok((name, start.join(end)))
     }
@@ -792,7 +804,11 @@ section build(jobs: int) {
     fn parses_compiler_declaration_implementation_and_assignment() {
         let parsed = program(
             r#"library "test" {
-                compiler cc { flags: Vec<String>, path: String }
+                compiler cc {
+                    flags: Vec<String>,
+                    path: String,
+                    graph: Map<String, Vec<tool::Input>>
+                }
                 function select(compiler: Compiler) { compiler = self::cc; compiler.path = "cc"; }
                 implement Self::cc {
                     paralleable function compile(compiler: self, file: String) { return compiler; }
@@ -808,6 +824,10 @@ section build(jobs: int) {
         };
         assert_eq!(compiler.name, "cc");
         assert_eq!(compiler.fields[0].type_name, "Vec<String>");
+        assert_eq!(
+            compiler.fields[2].type_name,
+            "Map<String, Vec<tool::Input>>"
+        );
         let LibraryItem::Function(select) = &lib.items[1] else {
             panic!("expected selection function")
         };
