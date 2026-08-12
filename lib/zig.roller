@@ -20,6 +20,7 @@ library "zig" {
             compiler = self::zig;
             compiler.file_location = sys::cmd::which("zig");
             compiler.zig_available = true;
+            compiler.optimize = "Debug";
             return Compiler::AVAILABLE;
         }
         log::error("Zig not found");
@@ -47,13 +48,11 @@ library "zig" {
 
         function optimize(compiler: self, level: String) -> Compiler {
             if level == "ReleaseFast" || level == "ReleaseSafe" || level == "ReleaseSmall" || level == "Debug" {
-                compiler.flags.push("-O");
-                compiler.flags.push(level);
+                compiler.optimize = level;
             } else {
                 log::error("Zig optimization mode must be Debug, ReleaseSafe, ReleaseFast, or ReleaseSmall.");
                 roller::exit(4);
             }
-            compiler.optimize = level;
             return compiler;
         }
 
@@ -103,6 +102,9 @@ library "zig" {
             let args = ["build-exe"];
             args.push_vec(outputs);
             args.push(sys::str::concat("-femit-bin=", output));
+
+            // release option
+            args.push(sys::str::concat("-O ", compiler.optimize));
 
             let result = sys::process::output(compiler.file_location, args);
             if result[0] != 0 {

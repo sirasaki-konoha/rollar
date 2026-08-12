@@ -2,7 +2,7 @@
 
 mod emit;
 
-pub use emit::{TranspileError, emit_program};
+pub use emit::{TranspileError, emit_program, emit_program_with_library_paths};
 
 /// The C runtime header content embedded in the binary.
 const RUNTIME_H: &str = include_str!("roller-runtime.h");

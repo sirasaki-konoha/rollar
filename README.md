@@ -11,6 +11,7 @@ Rust 1.85 以上が必要です。
 ```sh
 cargo build --workspace
 cargo install --path crates/roller-cli
+cargo install --path crates/roller-lsp
 ```
 
 ## CLI
@@ -32,6 +33,34 @@ roller run
 ```
 
 `--jobs` は最大並列数、`--verbose` は外部コマンドのargv表示、`--dry-run` は外部プロセスを起動しない計画表示です。`clean` の組み込みfallbackはプロジェクト内の `.roller/build` だけを正規化・検証して削除します。
+
+## Language Server
+
+`roller-lsp` は標準入出力でLanguage Server Protocolを提供します。エディタには、言語IDを `roller`、対象拡張子を `.roller`、起動コマンドを `roller-lsp` として登録してください。
+
+対応機能:
+
+- 編集ごとのLexer・Parser・トランスパイラ意味診断
+- Roller構文、型、組み込み名前空間、`sys::*` APIのスニペット補完
+- `import`された `.roller` ライブラリからの関数補完
+- 実装ごとのCompilerフィールドと`implement`メソッドの動的補完
+- ホバーによる型・シグネチャ・API説明
+- ローカル宣言とライブラリ宣言への定義ジャンプ
+- セクション、ライブラリ、Compiler、フィールド、メソッドの文書シンボル
+
+Neovimの組み込みLSPでは、たとえば次のように設定できます。
+
+```lua
+vim.filetype.add({ extension = { roller = "roller" } })
+vim.lsp.config.roller = {
+  cmd = { "roller-lsp" },
+  filetypes = { "roller" },
+  root_markers = { "build.roller", "Cargo.toml", ".git" },
+}
+vim.lsp.enable("roller")
+```
+
+LSPはCompilerメソッド名やシグネチャを固定リストとして持ちません。開いている文書、スクリプト隣接の`lib`、ワークスペースの`lib`、組み込みGCC/Clang/Zigライブラリを解析して候補を構築します。
 
 ## コンパイラライブラリ
 
@@ -97,6 +126,7 @@ cargo run -p roller-cli -- examples/hello-zig/build.roller clean
 - `roller-parser`: Lexer、AST、再帰下降Parser
 - `roller-transpiler`: ASTからCへの変換、ライブラリ読込、動的メソッドディスパッチ
 - `roller-diagnostics`: 共通のソース読込診断
+- `roller-lsp`: stdio Language Server、診断、補完、ホバー、定義、文書シンボル
 - `lib/*.roller`: GCC、Clang、Zigの具体的なコンパイラ実装
 
 詳細は [言語仕様](docs/language.md) と [アーキテクチャ](docs/architecture.md) を参照してください。

@@ -14,6 +14,10 @@ section build(jobs: int)
         roller::exit(1);
     }
 
+    if sys::env::get("RELEASE") == "1" {
+        z = z.optimize("ReleaseFast");
+    }
+
     for-parallel file in dir.recursive("./src")
     {
         parallel z.compile(file);

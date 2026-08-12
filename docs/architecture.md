@@ -20,8 +20,15 @@ Rustインタプリタは存在しません。実行意味論は生成CとCラ�
 - `roller-parser`: token/span、AST、Lexer、Parser
 - `roller-transpiler`: import解決、簡易型追跡、Cコード生成
 - `roller-diagnostics`: 共通ソース診断
+- `roller-lsp`: stdio JSON-RPC、文書同期、構文・意味診断、補完、ホバー、定義、文書シンボル
 
 旧 `roller-runtime` Rustインタプリタと旧 `roller-build` Rustビルドモデルは削除済みです。`roller-runtime.h` は生成プログラム用のCランタイムであり、Rustインタプリタとは別物です。
+
+## Language Server
+
+`roller-lsp` はLSP 3.xのContent-Length付きJSON-RPCを標準入出力で処理します。文書は全文同期し、各変更で既存Lexer/Parserを実行した後、同じCトランスパイラを実行して名前解決、無効な操作、メソッド利用などの意味診断を生成します。このためCLIとLSPが別々の文法・意味論を持ちません。
+
+補完カタログは組み込みの汎用APIに加え、開いている文書と`import`先のASTから構築します。Compilerのフィールド型とメソッドシグネチャは具体実装単位で読み取るため、GCCの整数最適化やZigの文字列最適化を共通の固定シグネチャへ変換しません。構文が編集中で不完全な場合も、token列から`import`とローカルbindingを回復し、ライブラリ・メンバー補完を継続します。
 
 ## Compiler の分離
 
