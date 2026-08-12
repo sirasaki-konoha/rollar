@@ -3,9 +3,48 @@ use std::process::ExitCode;
 
 use clap::Parser;
 
+const BUILD_ROLLER_TEMPLATE: &str = r#"import "gcc"
+import "clang"
+
+section build(jobs: int)
+{
+    roller::set_parallel_jobs(jobs);
+
+    let cc = Compiler::new();
+
+    if (gcc::get_compiler(&cc) != Compiler::AVAILABLE)
+        && (clang::get_compiler(&cc) != Compiler::AVAILABLE)
+    {
+        log::error(
+            "No available C compiler was found. Roller checked gcc and clang."
+        );
+        roller::exit(1);
+    }
+
+    let obj_compiler = cc.setflag("-c");
+
+    for-parallel file in dir.recursive("./src")
+    {
+        parallel obj_compiler.compile(file);
+    }
+
+    cc.link(obj_compiler.outputs(), "myproject");
+}
+
+section run()
+{
+    process::run("./myproject");
+}
+"#;
+
 fn main() -> ExitCode {
     match roller_cli::prepare_from(std::env::args_os()) {
         Ok(invocation) => {
+            // Handle --init flag
+            if invocation.init {
+                return init_project(&invocation.script);
+            }
+
             // Debug output modes
             if invocation.dump_tokens {
                 println!("{:#?}", invocation.tokens);
@@ -255,6 +294,25 @@ fn compile_and_run(
     eprintln!("error: no C compiler found. Roller requires tcc, gcc, or clang.");
     eprintln!("Install TCC for fastest builds: https://bellard.org/tcc/");
     ExitCode::from(1)
+}
+
+/// Initialize a new Roller project by creating a build.roller file.
+fn init_project(script_path: &Path) -> ExitCode {
+    if script_path.exists() {
+        eprintln!("error: {} already exists", script_path.display());
+        return ExitCode::FAILURE;
+    }
+
+    match std::fs::write(script_path, BUILD_ROLLER_TEMPLATE) {
+        Ok(()) => {
+            println!("Created {}", script_path.display());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("error: cannot create {}: {e}", script_path.display());
+            ExitCode::FAILURE
+        }
+    }
 }
 
 /// Check if an executable exists in PATH.

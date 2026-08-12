@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use roller_diagnostics::SourceError;
-use roller_parser::{LexError, Lexer, ParseError, Parser as RollerParser, Program, Token};
+use roller_parser::{LexError, Lexer, ParseError, Parser as RollerParser, Program, Span, Token};
 
 const MAX_PARALLEL_JOBS: usize = 1024;
 
@@ -20,7 +20,7 @@ const MAX_PARALLEL_JOBS: usize = 1024;
 )]
 pub struct Cli {
     /// Optional script followed by the section to execute.
-    #[arg(value_names = ["SCRIPT", "SECTION"], num_args = 1..=2)]
+    #[arg(value_names = ["SCRIPT", "SECTION"], num_args = 0..=2)]
     pub targets: Vec<OsString>,
 
     /// Maximum number of parallel jobs (must be at least one).
@@ -46,6 +46,10 @@ pub struct Cli {
     /// Print the parsed abstract syntax tree.
     #[arg(long)]
     pub dump_ast: bool,
+
+    /// Initialize a new Roller project by creating a build.roller file.
+    #[arg(long)]
+    pub init: bool,
 }
 
 fn parse_jobs(value: &str) -> Result<NonZeroUsize, String> {
@@ -87,6 +91,8 @@ pub struct Invocation {
     pub dump_tokens: bool,
     /// Whether AST debugging output was requested.
     pub dump_ast: bool,
+    /// Whether to initialize a new project.
+    pub init: bool,
 }
 
 /// Parse arguments, read the selected script as UTF-8, and return invocation data.
@@ -96,6 +102,33 @@ where
     T: Into<OsString> + Clone,
 {
     let cli = Cli::try_parse_from(args)?;
+
+    // Handle --init flag: create a minimal Invocation without reading a script
+    if cli.init && cli.targets.is_empty() {
+        let jobs = match cli.jobs {
+            Some(jobs) => jobs,
+            None => std::thread::available_parallelism().unwrap_or(NonZeroUsize::MIN),
+        };
+        return Ok(Invocation {
+            script: PathBuf::from("build.roller"),
+            section: "build".to_string(),
+            jobs,
+            verbose: cli.verbose,
+            dry_run: cli.dry_run,
+            source_bytes: 0,
+            source: String::new(),
+            tokens: Vec::new(),
+            program: Program {
+                items: Vec::new(),
+                span: Span::default(),
+            },
+            check: cli.check,
+            dump_tokens: cli.dump_tokens,
+            dump_ast: cli.dump_ast,
+            init: true,
+        });
+    }
+
     let (script, section) = match cli.targets.as_slice() {
         [section] => (
             PathBuf::from("build.roller"),
@@ -137,6 +170,7 @@ where
         check: cli.check,
         dump_tokens: cli.dump_tokens,
         dump_ast: cli.dump_ast,
+        init: cli.init,
     })
 }
 
